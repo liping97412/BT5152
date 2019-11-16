@@ -1,0 +1,153 @@
+---
+title: "decision making A2 - A0186040M"
+author: "LI LIPING"
+date: "17 September 2018"
+output: html_document
+---
+Q1
+```{r}
+library(caret)
+library(C50)
+credit <- read.csv("credit.csv")
+credit$default <- factor(credit$default)
+# if you like to shuffle dataset, the following are the sample codes
+s <- sample(1:nrow(credit))
+credit <- credit[s,]
+
+train_data <- credit[1:900,]
+test_data <- credit[901:1000,]
+```
+
+```{r}
+# fill in the following function for grid search, set .model = "tree", set .winnow = FALSE, tune ".trials" from 5 to 35
+tr_grid <- expand.grid(.winnow=FALSE,.trials=c(5:35),.model='tree')
+# fill in the following function for cross validation
+# second, you are required to use 
+# 2-fold cross validation for model_cv1
+model_cv1 <-  train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 2), tuneGrid = tr_grid)
+# 10-fold cross validation for model_cv2
+model_cv2 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10), tuneGrid = tr_grid)
+# 10-fold cross validation with repeats=5 for model_cv3
+model_cv3 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'repeatedcv',number = 10,repeats = 5), tuneGrid = tr_grid)
+# 10-fold cross validation with selectionFunction = "oneSE" for model_cv4, read the manual to understand the meaning of oneSE method
+model_cv4 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10,selectionFunction = "oneSE"), tuneGrid = tr_grid)
+# 10-fold cross validation with selectionFunction = "tolerance" for model_cv5, read the manual to understand the meaning of tolerance method
+model_cv5 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10,selectionFunction = "tolerance"), tuneGrid = tr_grid)
+```
+
+```{r}
+# after you build the model, you can use run "model_cv1" for example to find the optimal parameter
+model_cv1
+model_cv2
+model_cv3
+model_cv4
+model_cv5
+# pay attention to the optimal parameter of .trials of 5 cases
+# also check the accuracy on the test set by completing the following commands
+print(confusionMatrix(predict(model_cv1,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv2,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv3,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv4,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv5,test_data),test_data$default))
+# The following is not graded in A2, it is for you to explore further.
+# After you complete this exercise once, you can repeat line #28-32 again several times, 
+# check the optimal parameters and the number of trials. What is the optimal value of .trials? Which cross-validation method you feel is the best?
+# If you like, you can also practice writing a loop to repeat 10 or more times, calculate the mean and variance of accuracy to find out which method performs the best on this dataset.
+```
+
+Q2
+```{r}
+set.seed(42)
+library(neuralnet)
+credit <- read.csv("credit.csv")
+credit$default <- as.numeric(credit$default)-1
+library(dplyr)
+credit_cut <- select(credit,-default)
+#onehot encoding
+library(onehot)
+encoder1 <- onehot(credit_cut, max_levels = 100) 
+credit_cut <- as.data.frame(predict(encoder1, credit_cut))
+#replace the special character
+names(credit_cut)<-gsub(" ","_",names(credit_cut))
+names(credit_cut)<-gsub("-","_",names(credit_cut))
+#normalize
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+credit_cut <- as.data.frame(lapply(credit_cut, normalize))
+#build a formula
+col_names <- colnames(credit_cut)
+formula <- paste('default~',paste(col_names,collapse = '+'))
+credit_cut[,paste0("default")] <- credit$default
+#seperate the train and test dataset
+train_nn <- credit_cut[1:900,]
+test_nn <- credit_cut[901:1000,]
+```
+
+```{r}
+model_nn <- neuralnet(formula,train_nn,act.fct="logistic", linear.output = FALSE)
+pred_nn <- neuralnet::compute(model_nn,select(test_nn,-default))
+library(Metrics)
+#calculate auc
+library(ROCR)
+pred <- prediction(pred_nn$net.result,test_nn$default)
+auc_nn <- performance(pred,"auc")@y.values
+auc_nn
+```
+
+Q3
+```{r}
+set.seed(42)
+library(dplyr)
+library(neuralnet)
+diamonds_train <- select(read.csv("diamonds_train.csv"),-X)
+train_cut <- select(diamonds_train,-price)
+diamonds_test <- select(read.csv("diamonds_test_no_label.csv"),-X)
+total <- rbind(train_cut,diamonds_test)
+#nomalize numeric variable to [-1,1]
+normalize <- function(x) {
+return (2*(x - min(x)) / (max(x) - min(x))-1)
+}
+total_num_scaled <- mutate_all(select_if(total, is.numeric),normalize)
+total <- cbind(select_if(total,Negate(is.numeric)),total_num_scaled)
+train_norm <- total[1:2961,]
+test_norm <- total[2962:3700,]
+price <- diamonds_train$price
+price <- normalize(price)
+train_norm <- cbind(train_norm,price)
+#onehot encoding
+library(onehot)
+encoder2 <- onehot(train_norm, max_levels = 100) 
+train_norm <- as.data.frame(predict(encoder2, train_norm))
+encoder3 <- onehot(test_norm, max_levels = 100) 
+test_norm <- as.data.frame(predict(encoder3, test_norm))
+#to exclude the special character
+names(train_norm)<-gsub(" ","_",names(train_norm))
+names(train_norm)<-gsub("=","_",names(train_norm))
+names(test_norm)<-gsub(" ","_",names(test_norm))
+names(test_norm)<-gsub("=","_",names(test_norm))
+#to build a formula
+n <- colnames(train_norm)
+formula_reg <- as.formula(paste("price~", paste(n[!(n %in% "price")], collapse = " + ")))
+```
+
+
+```{r}
+#model baseline
+model_nn_reg <- neuralnet(formula_reg,train_norm,hidden=c(3,2),act.fct="tanh", linear.output = TRUE,stepmax = 5e05)
+#use caret to tune the model
+library(caret)
+ctrl <- trainControl(method = "cv",number=5)
+grid <- expand.grid(.layer1 = c(1,2,3,4,5,6,7,8), .layer2 = c(4,5,6), .layer3 = c(0))
+#model_tune <- train(price~., data = train_norm, method = "neuralnet", trControl=ctrl,tuneGrid = grid,threshold=0.03,stepmax=5e05,learningrate=0.3) 
+#model_tune
+#according to the result, the best model has 3 nodes in the first layer, 4 nodes in the second layer
+model_final <- neuralnet(formula_reg, data = train_norm,hidden=c(3,4),act.fct="tanh", linear.output = TRUE, threshold=0.03,stepmax=6e05,learningrate=0.3) 
+pred_scaled_price <- neuralnet::compute(model_final,test_norm)
+#denormalize
+denormalize <- function(x){return((x+1)*(max(diamonds_train$price)-min(diamonds_train$price))/2+min(diamonds_train$price))}
+pred_price <- as.data.frame(as.numeric(lapply(pred_scaled_price$net.result,denormalize)))
+names(pred_price)="price"
+write.csv(pred_price,"A0186040M.csv")
+```
+

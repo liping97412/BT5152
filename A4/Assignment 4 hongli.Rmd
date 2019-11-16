@@ -1,0 +1,113 @@
+---
+title: "Assignment 4"
+output: html_document
+---
+
+```{r}
+library(base)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(tm)
+library(jsonlite)
+library(caret)
+library(topicmodels)
+library(lsa)
+library(rpart)
+```
+
+## Task 1
+```{r}
+# read data
+transcripts <- read.csv("transcripts.csv")
+ted_main <- read.csv("ted_main.csv")
+# merge csv 
+ted_data <- merge(ted_main,transcripts,by.x = 'url',by.y = 'url')
+# construst corpus
+ted_corpus <- Corpus(VectorSource(ted_data$transcript))
+ted_dtm <- DocumentTermMatrix(ted_corpus)
+```
+
+## Task 2
+```{r}
+## find term freq in each document
+features_ted <- as.data.frame(tbl_df(as.matrix(ted_dtm)))
+## construct emot_words
+require("tm.lexicon.GeneralInquirer")
+emot_words <- terms_in_General_Inquirer_categories("EMOT")
+emot_scores <- tm_term_score(ted_dtm, emot_words)
+## construct emot_words freq in each document
+results <- as.data.frame(matrix(NA,nrow=nrow(features_ted),ncol=length(emot_words)))
+names(results) <- emot_words
+for (feature in names(features_ted)){
+  if (feature %in% emot_words){
+    results[,feature] <- features_ted[,feature]
+  }
+}
+results[is.na(results)]<-0
+melted_results <- melt(results)
+melted_results <- as.data.frame(cbind(rep(1:nrow(features_ted),length(emot_words)),melted_results))
+names(melted_results) <- c('index','terms','freq')
+##plot heat map
+ggplot(data = melted_results, aes(x=terms, y=index, fill=freq)) + geom_tile()
+
+
+```
+
+## Task 3
+```{r}
+## replace single quote with double
+ted_data$ratings <- gsub("'",'"', ted_data$ratings)
+## find highest count as label
+s_ratings <- vector()
+for (i in 1:nrow(ted_data)){
+  c_ratings <- fromJSON(ted_data$ratings[i])
+  s_ratings[i] <- c_ratings[which(c_ratings$count==max(c_ratings$count))[1],2]
+}
+## index ratings into corpus
+meta(ted_corpus, "rating", type = "indexed") <- s_ratings
+## get rating label
+train_ratings <- as.factor(meta(ted_corpus)$rating)
+## train model
+dtm_control <- list(weighting = weightTf, tolower = TRUE, removeNumbers = TRUE, stopwords = TRUE, removePunctuation = TRUE)
+ted_dtm<-DocumentTermMatrix(ted_corpus,control=dtm_control)
+freq_terms <- findFreqTerms(ted_dtm, lowfreq = 10)
+dtm_control$dictionary<-freq_terms
+ted_dtm<-DocumentTermMatrix(ted_corpus,control=dtm_control)
+features_dtm <- tbl_df(as.matrix(ted_dtm)) 
+nzv_columns <- nearZeroVar(features_dtm)
+features_dtm <- features_dtm[, -nzv_columns]
+model_control <- trainControl(method = "cv", number = 5)
+model <- train(features_dtm, train_ratings, method = "rpart", trControl = model_control)
+pred <- predict(model$finalModel, features_dtm,type='class')
+confusionMatrix(pred, train_ratings)
+```
+
+## Task 4
+```{r}
+set.seed(5152)
+## construct train data
+train <- DocumentTermMatrix(ted_corpus, control = dtm_control)
+## use LDA with n topics
+model <- LDA(train, k = 5, method = "Gibbs")
+## predict topic similarity of each document
+prob_output <- posterior(model, train)
+matrix <- prob_output$topics
+## find corelationship
+r <- nrow(matrix)
+cor_result <- matrix(NA,r,r)
+for (i in 1:r){
+  for(j in 1:r){
+    cor_result[i,j]<-as.numeric(cosine(matrix[i,],matrix[j,]))
+  }
+}
+## find related titles 
+related_titles <- matrix(NA,r,10)
+for (i in 1:r){
+  cols<-order(cor_result[,i],decreasing = TRUE)[1:11]
+  cols<-cols[cols != i]
+  related_titles[i,] <- as.character(ted_data$title[cols])
+  
+}
+
+```

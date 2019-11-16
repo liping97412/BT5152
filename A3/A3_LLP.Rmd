@@ -1,0 +1,206 @@
+---
+title: "Desicion making A3"
+author: "LI LIPING"
+date: "10 October 2018"
+output: html_document
+---
+###Task 1: 
+Write your own code of Random Forest of a postpruned rpart by modifying the R code template uploaded to IVLE A3 folder. (3 marks)
+- You might find the swirl exercise (BT5152 Tutorial 1 Decision Trees) from week 3 helpful if you need to refresh your memory on postprune of an rpart decision tree.
+- Performance metric is simple accuracy for binary labels.
+- This part is for practice purpose to help you check your understanding about Random Forest algorithm. In practice, most packages implements with using a fully grown tree.
+- Grading of this part is about the correctness of your code and checking your understanding about random forest. Prediction performance won't be graded.
+```{r}
+library(rpart)
+library(ggplot2)
+
+rawdata <- read.csv("A3_train.csv")
+# use the first 1500 records in A3_train.csv for train_data and the last 500 records in A3_train.csv for test_data
+train_data <- rawdata[1:1500, ]
+test_data <- rawdata[1501:2000, ]
+
+set.seed(1234)
+
+# Train a single tree model as our base model, to which we can compare with
+# our random forest implementation later
+model_rpart <- rpart(y ~., train_data)
+pred_rpart <- predict(model_rpart, test_data)
+
+rmse <- function(predicted, actual) {
+  return(sqrt(mean((predicted - actual)^2)))
+}
+cat('Single tree model RMSE:', rmse(pred_rpart, test_data$y), '\n')
+
+####################################
+####    Manual Random Forest     ###
+####################################
+library(dplyr)
+
+train_random_forest <- function(n_trees, n_features,
+                                train_data_data, target_col_name){
+  models <- lapply(1:n_trees, function(i) {
+    # bootstrapping
+    n_samples <- nrow(train_data_data)
+    #generate a number between 0-2000
+    sample_row_ids <- sample(1:n_samples, replace=TRUE)
+    new_train_data <- train_data[sample_row_ids, ]
+
+    ### START CODE HERE ### (≈ 5 lines)
+    # Subset n_features columns.
+    # Be careful to prevent target column from being sampled,
+    # but make sure it's eventually present in new_train_data_data
+    new_train_data2 <- select(new_train_data,-target_col_name)
+    n_cols <- ncol(new_train_data2)
+    # Subset n_features columns.
+    sample_col_ids <- sample(c(1:n_cols), size=n_features, replace=FALSE)
+    new_train_data3 <- new_train_data2[,sample_col_ids]
+    new_train_data3[,target_col_name] <- new_train_data[,target_col_name]
+
+    ### END CODE HERE ###
+
+    formula <- as.formula(paste(target_col_name, '~.'))
+    new_model <- rpart(formula, data=new_train_data3)
+
+    ### START CODE HERE ### (≈ 2 lines)
+    # post-prune the rpart model & return it
+    best_cp <- new_model$cptable[which.min(new_model$cptable[,'xerror']), 'CP']
+    new_model <- rpart(formula, data=new_train_data3, control=rpart.control(cp=best_cp))
+    return(new_model)
+    ### END CODE HERE ###
+  })
+  return(models)
+}
+
+predict_random_forest <- function(models, test_data) {
+  preds <- sapply(models, function(model) {
+    return(predict(model, test_data))
+  })
+   preds1 <- mapply(preds,FUN=as.numeric)
+   preds <- matrix(data = preds1, nrow = nrow(preds), ncol = ncol(preds))
+   return(ifelse((rowSums(preds)/ length(models))>= 0.5, 1,0))
+  }
+
+models_rf <- train_random_forest(50, 4, train_data, 'y')
+pred_rf <- predict_random_forest(models_rf, test_data)
+
+mean(pred_rf == test_data$y)
+```
+
+###task 2
+Stacking of three algorithms: C50 with default parameter values, KNN with k=3, and your random forest in Task 1. The output of level0 is a binary label (not predicted probability). Logistic regression is used for the level1 algorithm. The learning objective is to help you check your understanding about Stacking. (4 marks)
+-The final output is a binary label and the performance metric is simple accuracy.
+- You may use the same classification problem dataset provided in the template for Task 1. Make sure your implementation is able to report the prediction accuracy on the test dataset.
+- Same as Task 1: grading of this part is about the correctness of your code. Prediction performance won't be graded.
+- In this question, you need to code the details of Stacking. In other words, you are not allowed to use caretEnsemble or caretStack. You are allowed and encouraged to use these packages in Task 3.
+- Bonus (up to 1 mark): You may include additional code and a half page discussion comparing your stacking implementation and any of the level0 models. You may also consider generalizing your stacking implantation such that it can be used on any classification dataset.
+```{r}
+#Loading Required Packages
+library(caret)
+set.seed(1234)
+
+#Making dependent variable factor
+train_data$y <- as.factor(train_data$y )
+test_data$y <- as.factor(test_data$y)
+
+#seperate the data for level 0 and level 1 train
+new_train_data <- train_data[1:1000,]
+new_test_data <- train_data[1001:1500,]
+
+#for level 0
+#c50
+library(C50) 
+model_c50 <- C5.0(y~.,new_train_data)
+#knn
+library(FNN)
+new_train_data$y <- as.numeric(new_train_data$y)-1
+model_knn <- knn(new_train_data, new_train_data, cl=new_train_data$y,k=3)
+#random forest
+model_rf <- train_random_forest(50, 4, new_train_data, 'y')
+
+#for level 1
+new_test <- setNames(as.data.frame(matrix(nrow = 500, ncol = 4)),c('c50','knn','rf','y'))
+new_test$c50 <- predict(model_c50,new_test_data)
+new_test_data$y <- as.numeric(new_test_data$y)-1
+new_test$knn <- knn(new_train_data, new_test_data, cl=new_train_data$y,k=3)
+new_test$rf <-  predict_random_forest(model_rf, new_test_data)
+new_test$y <- new_test_data$y
+model_glm <- glm(y~.,new_test,family=binomial)
+
+#for real prediction
+real_test <- setNames(as.data.frame(matrix(nrow = 500, ncol = 4)),c('c50','knn','rf','y'))
+real_test$c50 <- predict(model_c50,test_data)
+test_data$y <- as.numeric(test_data$y)-1
+real_test$knn <- knn(new_train_data, test_data, cl=new_train_data$y,k=3)
+real_test$rf <-  predict_random_forest(model_rf, test_data)
+real_test$y <- test_data$y
+pred_y <- predict(model_glm,real_test,type = "response")
+pred_y <- ifelse(pred_y>=0.5,1,0)
+mean(pred_y==test_data$y)
+
+```
+
+###Task 3 Toy Data Competition. Now you try your best to predict the true label of the 2000 rows in the test set file (the file without true label). The performance metric is AUC . In other words, you are required to submit predicted probabilities. (5 marks)
+-Grading of this task is based on your prediction performance and reproducibility of your prediction results . You need to submit your predicted values and also the code to generate predicted values for verification purpose. If your AUC is around median AUC of this class, your expected mark is 2.5 out of 5 in this assignment.
+-To alleviate the workload of TA, your training code must complete within 5 minutes.
+-You can gridsearch by Caret and only submit the code to build your final model with the chosen parameters. On my 3 year old normal desktop, xgBoost takes less than 1 second to train on this dataset.
+-You are allowed to use any R packages for algorithms covered in our lectures, the required textbook, and tutorials before week 7 (including Week 7). Packages for algorithms not covered so far are NOT allowed.
+-Only R is allowed. Python is not allowed in this exercise.
+-LightGBM is not allowed. GBM or XGBoost in R is allowed.
+-At the same time, you are allowed to try different settings of any of the R packages covered. You do not need to stick to the (default) parameter settings used in the sample codes from tutorials. For example, you can change the parameter settings of neuralnet or nnet packages in any way that you like.
+-Using randomForest package in R or Caret is allowed. No need to use the handcoded
+version of Random Forest.
+-caretEnsemble or caretStack is allowed.
+-You can choose to use Caret or not.
+-You are allowed and encouraged to create new features based on raw data. Any function for features engineering is allowed.
+-You are allowed to drop features if you believe it helps the performance. Using R packages to help you execute features selection methods or dimension reduction methods is allowed.
+```{r}
+set.seed(1234)
+library(caret)
+library(caretEnsemble)
+library(dplyr)
+#data preparation
+training <- read.csv("A3_train.csv")
+testing <- read.csv("A3_test.csv")
+training$y <- as.factor(training$y)
+training$y  <- factor(training$y ,levels = c(0,1),labels = c("level1", "level2"))
+
+#the base models
+folds <- createFolds(training$y,5)
+control <- trainControl(method='repeatedcv', number=5, repeats=3, index=folds, savePredictions='final', classProbs=TRUE, summaryFunction=twoClassSummary)
+algos <- c('adaboost','nnet','rf','knn', 'glmboost')
+models <- caretList(y~., data=training, metric='ROC', trControl=control, methodList=algos)
+models_perf <- resamples(models)
+
+#display the cross-validated performance
+summary(models_perf)
+
+#check that the predictions of our models are not highly correlated (cor>0.75)
+modelCor(models_perf)
+
+#stack model
+stack_control <- trainControl(method='repeatedcv', number=5, repeats=3, classProbs=TRUE, summaryFunction=twoClassSummary)
+
+#stack_grid <- expand.grid(.max_depth=c(1, 3, 6), .min_child_weight=c(1, 5), .gamma=c(0, 1, 10), .subsample=c(0.8, 1), .colsample_bytree=c(0.8, 1), .nrounds=c(20, 100), .eta=c(0.01, 0.3, 0.6))
+###best parameters(nrounds = 100, max_depth = 6, eta= 0.01, gamma = 1, colsample_bytree = 0.8, min_child_weight = 1,subsample = 0.8)
+
+#to save time to use the best parameters directly
+stack_model <- caretStack(models, method='xgbTree', metric='ROC', trControl=stack_control,tuneGrid=expand.grid(.max_depth= 6, .min_child_weight=1, .gamma=1, .subsample=0.8, .colsample_bytree=0.8, .nrounds= 100, .eta=0.01))
+stack_model
+
+#tune xgboost
+#library(xgboost)
+#construct the best model
+#train_label_binary <- as.numeric(training$y)-1
+#train_matrix <- xgb.DMatrix(as.matrix(select(training, -y)), label=train_label_binary)
+#xgb_ctrl <- trainControl(method = "cv",5)
+#The final values used for the model were nrounds = 60, max_depth = 5, eta = 0.01,gamma = 1, colsample_bytree = 0.8, min_child_weight = 1 and subsample = 0.8.
+#grid <- expand.grid(.nrounds=c(40,60,80,100,120),.eta=c(0.01,0.02,0.03,0.04),.gamma=c(0,1,10),.max_depth=c(3,4,5,6,7,8),.colsample_bytree=c(0.8,1),.subsample=c(0.8,1),.min_child_weight=c(1,5))
+#model_xgb <- train(y ~ ., data = train_data, method = "xgbTree", trControl = xgb_ctrl, tuneGrid = grid)
+#model_xgb <- xgboost(data=train_matrix,nrounds = 100, max_depth = 6, eta= 0.01, gamma = 1, colsample_bytree = 0.8, min_child_weight = 1,subsample = 0.8, objective='binary:logistic')
+
+pred_test_y <- predict(stack_model,testing)
+pred_test_y <- as.numeric(pred_test_y)-1
+names(pred_test_y)="predicted y"
+write.csv(pred_test_y,"A0186040M.csv")
+```
+

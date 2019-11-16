@@ -1,0 +1,176 @@
+---
+title: "decision making A2"
+author: "LI LIPING"
+date: "17 September 2018"
+output: html_document
+---
+
+```{r}
+library(caret)
+library(C50)
+
+credit <- read.csv("credit.csv")
+credit$default <- factor(credit$default)
+
+# if you like to shuffle dataset, the following are the sample codes
+s <- sample(1:nrow(credit))
+credit <- credit[s,]
+
+train_data <- credit[1:900,]
+test_data <- credit[901:1000,]
+head(train_data)
+head(test_data)
+
+```
+
+```{r}
+# fill in the following function for grid search, set .model = "tree", set .winnow = FALSE, tune ".trials" from 5 to 35
+tr_grid <- expand.grid(.winnow=FALSE,.trials=c(5:35),.model='tree')
+# fill in the following function for cross validation
+# first, read the manual by help(trainControl) to find out how to use different kinds of cross validation
+help(trainControl)
+# second, you are required to use 
+# 2-fold cross validation for model_cv1
+model_cv1 <-  train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 2), tuneGrid = tr_grid)
+# 10-fold cross validation for model_cv2
+model_cv2 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10), tuneGrid = tr_grid)
+# 10-fold cross validation with repeats=5 for model_cv3
+model_cv3 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10,repeats = 5), tuneGrid = tr_grid)
+# 10-fold cross validation with selectionFunction = "oneSE" for model_cv4, read the manual to understand the meaning of oneSE method
+model_cv4 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10,selectionFunction = "oneSE"), tuneGrid = tr_grid)
+# 10-fold cross validation with selectionFunction = "tolerance" for model_cv5, read the manual to understand the meaning of tolerance method
+model_cv5 <- train(default ~ ., data=train_data, method='C5.0', trControl=trainControl(method = 'cv',number = 10,selectionFunction = "tolerance"), tuneGrid = tr_grid)
+```
+
+```{r}
+# after you build the model, you can use run "model_cv1" for example to find the optimal parameter
+# pay attention to the optimal parameter of .trials of 5 cases
+# also check the accuracy on the test set by completing the following commands
+
+print(confusionMatrix(predict(model_cv1,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv2,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv3,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv4,test_data),test_data$default))
+print(confusionMatrix(predict(model_cv5,test_data),test_data$default))
+
+# The following is not graded in A2, it is for you to explore further.
+# After you complete this exercise once, you can repeat line #28-32 again several times, 
+# check the optimal parameters and the number of trials. What is the optimal value of .trials? Which cross-validation method you feel is the best?
+# If you like, you can also practice writing a loop to repeat 10 or more times, calculate the mean and variance of accuracy to find out which method performs the best on this dataset.
+
+```
+
+In this question, you don't need to use Caret. You can directly use "neuralnet"
+package for classification on the same dataset of Q1. To build a classification model
+using "neuralnet", you need to use logistic activation function and set the output layer
+to use the same activation function as hidden layers. These two options are (act.fct =
+"logistic", linear.output = FALSE). Now you can take a look at your output vector and
+it should be between 0 to 1. This output can be interpreted as predicted probability.
+Last, calculate AUC by ROCR package's performance command
+performance(pred,"auc")@y.values. Performance does not matter for this question
+and you don't need to tune neuralnet. You will practice that in the next question.
+Remember to set.seed(42) before building your neuralnet model, which will allow the
+grader to verify your auc value against the model answer.
+Additional Remarks: In the future, you can use Caret with "nnet" packages for
+classification.
+```{r}
+set.seed(42)
+library(neuralnet)
+train_data$default <- as.numeric(train_data$default)-1
+test_data$default <- as.numeric(test_data$default)-1
+library(dplyr)
+train_cut <- select(train_data,-default)
+test_cut <- select(test_data,-default)
+#onehot encoding
+library(onehot)
+encoder1 <- onehot(train_cut, max_levels = 100) 
+train_cut <- as.data.frame(predict(encoder1, train_cut))
+encoder2 <- onehot(test_cut, max_levels = 100) 
+test_cut <- as.data.frame(predict(encoder2, test_cut))
+#replace the special character
+names(train_cut)<-gsub(" ","_",names(train_cut))
+names(train_cut)<-gsub("-","_",names(train_cut))
+names(test_cut)<-gsub(" ","_",names(test_cut))
+names(test_cut)<-gsub("-","_",names(test_cut))
+#normalize
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+train_cut <- as.data.frame(lapply(train_cut, normalize))
+test_cut <- as.data.frame(lapply(test_cut, normalize))
+#build a formula
+col_names <- colnames(train_cut)
+formula <- paste('default~',paste(col_names,collapse = '+'))
+train_cut[,paste0("default")] <- train_data$default
+test_cut[,paste0("default")] <- test_data$default
+formula
+```
+
+```{r}
+model_nn <- neuralnet(formula,train_cut,act.fct="logistic", linear.output = FALSE)
+pred_nn <- neuralnet::compute(model_nn,select(test_cut,-default))
+library(Metrics)
+mae(test_cut$default,pred_nn$net.result)
+
+library(ROCR)
+pred <- prediction(pred_nn$net.result,test_cut$default)
+roc_nn <- performance(pred,"tpr","fpr")
+plot(roc_nn,col='red')
+abline(a=0,b=1,lty=2)
+auc_nn <- performance(pred,"auc")@y.values
+auc_nn
+```
+Requirement:
+1. You are required to use neuralnet package in R. 
+2. You are required to tune by Caret in R. 
+3. Train and tune a two-level neural network for this prediction task by tanh activation function and linear output. Report the optimal number of nodes in each layer.
+4. The performance metric is RMSE. 
+5. Aside from your R code, also submit your predicted prices on the test dataset in a csv file, which contains a single column "price". There should be 739 data rows in this csv. Remember to scale back if you normalize your "price" column for training.
+6. Remember to `set.seed` before training your model, such that your result is reproducible. If your predictions.csv cannot be reproduced by running your code, you will receive 0.
+7. Top 10% submissions will receive bonus +1 mark, bottom 10% submissions will receive penalty -1 mark, subject to a maximum mark of 12 total, and a minimum mark of 0 total for this assignment.
+```{r}
+set.seed(42)
+library(dplyr)
+library(neuralnet)
+diamonds_train <- select(read.csv("diamonds_train.csv"),-X)
+diamonds_test <- select(read.csv("diamonds_test_no_label.csv"),-X)
+#onehot encoding
+library(onehot)
+encoder2 <- onehot(diamonds_train, max_levels = 100) 
+diamonds_train <- as.data.frame(predict(encoder2, diamonds_train))
+encoder3 <- onehot(diamonds_test, max_levels = 100) 
+diamonds_test <- as.data.frame(predict(encoder3, diamonds_test))
+#nomalize to [-1,1]
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+train_norm <- as.data.frame(lapply(diamonds_train, normalize))
+test_norm <- as.data.frame(lapply(diamonds_test, normalize))
+#to exclude the special character
+names(train_norm)<-gsub(" ","_",names(train_norm))
+names(test_norm)<-gsub(" ","_",names(test_norm))
+#to build a formula
+n <- colnames(train_norm)
+formula_reg <- as.formula(paste("price~", paste(n[!(n %in% "price")], collapse = " + ")))
+#model baseline
+model_base <- neuralnet(formula_reg,train_norm,hidden=c(3,2),act.fct="tanh", linear.output = TRUE)
+plot(model_base)
+#use caret to tune the model
+library(caret)
+grid <- expand.grid(layer1=c(5,10,15,20),layer2=c(0),layer3=C(0),learningrate = c(0.001, 0.0001),dropout = c(0, 0.2),beta1 = .9,beta2 = 0.999,activation = 'relu')
+ctrl <- trainControl(method=method = "cv",number=2)
+prestige.fit <- train(price~., data = train_norm,method = "nnet", tuneGrid = my.grid,control=ctrl,metric="RMSE") 
+str(prestige.fit)
+
+results_train <- predict(prestige.fit, newdata=select(train_norm,-price))
+conf1 <- confusionMatrix(results_train, train_norm$price)
+results_test <- predict(prestige.fit, newdata=test_norm)
+
+
+#denoirmalize
+denormalize <- function(x,min_x,max_x){return(x*(max_x-min_x)+min_x)}
+train_diamond <- as.data.frame(lapply(train_norm, denormalize))
+test_diamond <- as.data.frame(lapply(test_norm, denormalize))
+
+```
+

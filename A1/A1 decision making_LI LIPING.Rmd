@@ -1,0 +1,143 @@
+---
+title: "A1 decision making"
+author: "LI LIPING"
+date: "29 August 2018"
+output: html_document
+---
+1. (6 marks) Model the training data "loan_train.csv" using KNN, Naïve Bayes, C50 decision tree decision tree receptively. Report training accuracies and test accuracies on the training dataset "loan_train.csv" and test dataset "loan_test.csv" respectively.
+---Remember to scale your numerical variables properly and convert categorical variables by OneHot for KNN.
+```{r}
+##data cleaning
+train <- read.csv("loan_train.csv",header=T,stringsAsFactors = TRUE)
+test <- read.csv("loan_test.csv",header=T,stringsAsFactors = TRUE)
+
+#onehot encoding 
+library(onehot)
+encoder1 <- onehot(train, max_levels = 100) 
+train <- as.data.frame(predict(encoder1, train))
+encoder2 <- onehot(test, max_levels = 100)
+test <- as.data.frame(predict(encoder2, test))
+
+#cut the result column from the dataset
+library(dplyr)
+train_cut <- select(train,-bad_loans)
+test_cut <- select(test,-bad_loans)
+
+#nomalize
+normalize <- function(x) {
+return ((x - min(x,na.rm = TRUE)) / (max(x,na.rm = TRUE) - min(x,na.rm = TRUE)))
+}
+train_norm <- as.data.frame(lapply(train_cut, normalize))
+test_norm <- as.data.frame(lapply(test_cut, normalize))
+```
+
+```{r}
+##KNN
+library(class)
+test_pred <-knn(train_norm,test_norm,train$bad_loans)
+#test accuracy
+mean(test_pred==test$bad_loans)
+#train accuracy
+train_pred <- knn(train_norm,train_norm,train$bad_loans)
+mean(train_pred==train$bad_loans)
+```
+
+
+```{r}
+##naivebayes
+library(dplyr)
+train_nb <- read.csv("loan_train.csv",header=T)
+test_nb <- read.csv("loan_test.csv",header=T)
+train_nb$bad_loans <- as.factor(train_nb$bad_loans)
+test_nb$bad_loans <- as.factor(test_nb$bad_loans)
+train_nb_cut <- select(train_nb,-bad_loans)
+test_nb_cut <- select(test_nb,-bad_loans)
+```
+
+
+```{r}
+library(e1071)
+model_nb <- naiveBayes(bad_loans~.,train_nb,Lapalace=1)
+test_nb_pred <- predict(model_nb,test_nb_cut)
+#test accuracy
+mean(test_nb_pred==test_nb$bad_loans)
+#train accuracy
+mean(predict(model_nb,train_nb_cut)==train_nb$bad_loans)
+```
+
+
+```{r}
+library(C50)
+model_tree <- C5.0(bad_loans~.,train_nb)
+test_tree_pred <- predict(model_tree,test_nb_cut)
+#test accuracy
+mean(test_tree_pred==test_nb$bad_loans)
+#train accuracy
+mean(predict(model_tree,train_nb_cut)==train_nb$bad_loans)
+```
+
+2.(6 marks) Now we practice rpart package. In order to avoid over fitting, prune the decision tree using three pre-pruning methods, and post-pruning by best complexity parameter. Compare the accuracies of fully-grown tree and 4 trees (both on training set and testing set) of the decision tree classifier. Discuss which tree gives you the best prediction results on the test set.
+--Before pruning (the fully-grown tree in this assignment), please set cp= 1e-05 (0.00001).
+---For the 3 pre-pruning, try minsplit = 800, minbucket = 200, and maxdepth = 3.
+---This bullet is not a requirement for this assignment. You are encouraged to try other pre-pruning parameters or change cp before pruning to understand more about how pruning affect the accuracy on the training set and test set.
+```{r}
+#fully grown tree
+library(rpart)
+model_baseline <- rpart(bad_loans~.,train_nb,control = rpart.control(cp=0.00001))
+test_rpart_base <- predict(model_baseline,test_nb_cut,type = "class")
+train_rpart_base <- predict(model_baseline,train_nb_cut,type = "class")
+#test accuracy
+mean(test_rpart_base==test_nb$bad_loans)
+#train accuracy
+mean(train_rpart_base==train_nb$bad_loans)
+```
+
+
+```{r}
+#pre-pruning1
+rpart_prepruning1 <- rpart(bad_loans~.,train_nb,control = rpart.control(cp= 0.00001,minsplit = 800))
+test_rpart_pred1 <- predict(rpart_prepruning1,test_nb_cut,type = "class")
+train_rpart_pred1 <- predict(rpart_prepruning1,train_nb_cut,type = "class")
+#test accuracy
+mean(test_rpart_pred1==test_nb$bad_loans)
+#train accuracy
+mean(train_rpart_pred1==train_nb$bad_loans)
+```
+
+
+```{r}
+#pre-pruning2
+rpart_prepruning2 <- rpart(bad_loans~.,train_nb,control = rpart.control(cp= 0.00001,minbucket = 200))
+test_rpart_pred2 <- predict(rpart_prepruning2,test_nb_cut,type = "class")
+train_rpart_pred2 <- predict(rpart_prepruning2,train_nb_cut,type = "class")
+#test accuracy
+mean(test_rpart_pred2==test_nb$bad_loans)
+#train accuracy
+mean(train_rpart_pred2==train_nb$bad_loans)
+```
+
+
+```{r}
+#pre-pruning3
+rpart_prepruning3 <- rpart(bad_loans~.,train_nb,control = rpart.control(cp= 0.00001,maxdepth = 3))
+test_rpart_pred3 <- predict(rpart_prepruning3,test_nb_cut,type = "class")
+train_rpart_pred3 <- predict(rpart_prepruning3,train_nb_cut,type = "class")
+#test accuracy
+mean(test_rpart_pred3==test_nb$bad_loans)
+#train accuracy
+mean(train_rpart_pred3==train_nb$bad_loans)
+```
+
+
+```{r}
+#pruned
+set.seed(1234)
+bestcp <- model_baseline$cptable[which.min(model_baseline$cptable[,"xerror"]),"CP"]
+tree.pruned <- prune(model_baseline, cp = bestcp)
+test_rpart_pruned <- predict(tree.pruned,test_nb_cut,type = "class")
+train_rpart_pruned <- predict(tree.pruned,train_nb_cut,type = "class")
+#test accuracy
+mean(test_rpart_pruned==test_nb$bad_loans)
+#train accuracy
+mean(train_rpart_pruned==train_nb$bad_loans)
+```

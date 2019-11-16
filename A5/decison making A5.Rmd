@@ -1,0 +1,76 @@
+---
+title: "decision making A5"
+author: "LI LIPING"
+date: "1 November 2018"
+output: html_document
+---
+###task1
+Let's use the A3 training dataset for this question. You can keep only two columns, X4 and X8, and the label is still y. Use the first 1500 rows for training and last 500 rows for testing.
+We will compare the performance of 3 different SVM kernels by "svm" function of "e1071" library. Based on the sample code provided, please Train, Tune, and Visualize SVM using the following 3 kernels: (1) Polynomial Kernel, (2) RBF Kernel, (3) Sigmoid Kernel. The initial data preparation part has been done for you in the code sample (A5-1_template.R) Using the best parameters to make predictions on the testing set. Briefly report that how is
+the best prediction performance across 3 kernels. How does the best model compare to
+other algorithms that you have tried in A3?
+Grading of this question is mostly based on the correctness of your code. However, if your
+result is far from the median performance of this class of 3 methods, penalty may be
+imposed.
+```{r}
+library(e1071)
+library(caret)
+
+train <- read.csv("data/A3_train.csv", colClasses = append(rep(c("numeric"), times = 15), "factor"))
+
+cols <- c('x4', 'x8', 'y')
+
+train_t <- train[1:1500, cols]
+train_v <- train[1501:2000, cols]
+
+model.linear <- svm(y ~ ., data=train_t, kernel = 'linear', cost = 1)
+plot(model.linear, train_t)
+
+pred.linear = predict(model.linear, train_v)
+confusionMatrix(pred.linear, train_v$y)
+
+
+#Polynomial Kernel,#3 parameters to tune
+model.poly <- svm(y ~ ., data=train_t, kernel = 'polynomial', gama=1,cost=1)
+
+
+#RBF Kernel,1 parameter to tune
+model.rbf <- svm(y ~ ., data=train_t, kernel = 'radial',cost=1)
+
+
+#Sigmoid Kernel,2 parameters to tune
+model.sig <- svm(y ~ ., data=train_t, kernel = 'sigmoid',cost=1)
+
+
+
+# perform a grid search on C and epsilon together
+tuneResult <- tune(svm, Y ~ X,  data = data,ranges = list(epsilon = seq(0,1,0.1), cost = 2^(2:9))) # epsilon from 0 to 1 with step 0.1
+print(tuneResult)
+# Draw the tuning graph
+# I comment the following graph so you can still see the predicted value on the orignal plot
+# plot(tuneResult) 
+
+# using the best model 
+tunedModel <- tuneResult$best.model
+tunedModelYSVM2 <- predict(tunedModel, data) 
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

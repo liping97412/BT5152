@@ -1,0 +1,328 @@
+---
+title: "BT5152 Assignment 3"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+### Ren Jiewen A0186102N
+
+#### In this assignment, we will practice coding ensemble methods in R and learn how those methods could help us improve the prediction performance.
+
+#### The data is a simulated dataset with one binary label and 15 numerical features. There are 2000 records in the training data (with label values) and 2000 records in the test data (without label values). For Task 1 and Task 2, please use the first 1500 records in A3_train.csv for training and the last 500 records in A3_train.csv for computing performance.
+
+#### Task 1: Write your own code of Random Forest of a post-pruned rpart by modifying the sample R code uploaded to IVLE A3 folder. (3 marks)
+
+●	Performance metric is simple accuracy for binary labels.
+●	This part is for practice purpose to help you check your understanding about Random Forest algorithm. In practice, most packages implement with using a fully-grown tree.
+
+```{r}
+library(dplyr)
+library(rpart)
+library(ggplot2) # for the diamonds dataset
+
+set.seed(1234)
+
+# Read data
+rawdata = read.csv("A3_train.csv",header=T)
+# Seperate Data
+train_data <- rawdata[1:1500, ]
+test_data <- rawdata[1501:2000, ]
+train_data$y <- as.factor(train_data$y)
+
+# Train a single tree model as our base model, to which we can compare with
+# our random forest implementation later
+model_rpart <- rpart(y ~., train_data,method = "class")
+pred_rpart <- predict(model_rpart, test_data, type = "class")
+
+# test accuracy
+cat('Single tree model accuracy:', mean(pred_rpart == test_data$y), '\n')
+
+####################################
+####    Manual Random Forest     ###
+####################################
+
+train_random_forest <- function(n_trees, n_features,
+                                training_data, target_col_name){
+  models <- lapply(1:n_trees, function(i) {
+    # bootstrapping
+    n_samples <- nrow(training_data)
+    sample_row_ids <- sample(1:n_samples, replace=TRUE)
+    new_training_data <- training_data[sample_row_ids, ]
+    
+    # Prevent target column from being sampled
+    new_training_data_col  <- select(new_training_data,-target_col_name)
+    # Subset n_features columns
+    sample_column_ids <- sample(c(1:ncol(new_training_data_col)),size = n_features,replace = FALSE)
+    new_training_data_final <- new_training_data_col[,sample_column_ids]
+    # Make sure it's eventually present in new_training_data
+    new_training_data_final[,target_col_name] <- new_training_data[,target_col_name]
+
+    formula <- as.formula(paste(target_col_name, '~.'))
+    new_model <- rpart(formula, data=new_training_data_final)
+    # post-prune the rpart model & return it
+    best_cp <- new_model$cptable[which.min(new_model$cptable[,'xerror']),'CP']
+    new_model <- rpart(formula, data=new_training_data_final, control = rpart.control(cp=best_cp))
+    return(new_model)
+  })
+  return(models)
+}
+
+predict_random_forest <- function(models, test_data) {
+  preds <- sapply(models, function(model) {
+    return(predict(model,test_data, type ="class"))
+  })
+   # Convert preds to a numeric matrix
+   preds_mod <- mapply(preds,FUN=as.numeric)
+   # Make sure the dimensions match
+   preds <- matrix(data = preds_mod, nrow = nrow(preds), ncol = ncol(preds))
+   # If the average is greater than 0.5, the predicted class is 1, vice versa
+   return(ifelse((rowSums(preds)/ length(models))>= 0.5, 1,0))
+  }
+
+models_rf <- train_random_forest(50, 4, train_data, 'y')
+pred_rf <- predict_random_forest(models_rf, test_data)
+cat('Random Forest accuracy:', mean(pred_rf == test_data$y), '\n')
+```
+#### Question 2
+
+#### Task 2: Stacking of three algorithms: C50 with default parameter values, KNN with k=3, and your random forest in Task 1. The output of level0 is a binary label (not predicted probability). Logistic regression is used for the level1 algorithm. The learning objective is to help you check your understanding about Stacking. (4 marks)
+● The final output is a binary label and the performance metric is simple accuracy.
+● You may use the same classification problem dataset provided in the template for Task 1. Make sure your implementation is able to report the prediction accuracy on the test dataset.
+● Same as Task 1: grading of this part is about the correctness of your code. Prediction performance won’t be graded.
+● In this question, you need to code the details of Stacking. In other words, you are not allowed to use caretEnsemble or caretStack. You are allowed and encouraged to use these packages in Task 3.
+
+```{r message=FALSE}
+set.seed(1234)
+library(C50)
+library(FNN)
+library(caret) 
+library(rpart)
+
+# Prepare data for stacking process
+rawdata$y <- as.factor(rawdata$y)
+train <- rawdata[1:1000, ]
+validate <- rawdata[1001:1500,]
+test <- rawdata[1501:2000, ]
+
+# C50 
+k_model_C50 <- C5.0(y ~ ., data = train)
+pred_train_C50 <- predict(k_model_C50, validate)
+pred_train_C50 <- as.data.frame(unlist(pred_train_C50))
+# C50: predict test data
+pred_test_C50 <- predict(k_model_C50, test)
+pred_test_C50 <- as.data.frame(unlist(pred_test_C50))
+
+# Random Forest
+k_model_rf <- train_random_forest(50, 4, train, 'y')
+pred_train_rf <- predict_random_forest(k_model_rf, validate)
+pred_train_rf <- as.factor(unlist(pred_train_rf))
+# RF: predict test data
+pred_test_rf <- predict_random_forest(k_model_rf, test)
+pred_test_rf <- as.factor(pred_test_rf)
+  
+# KNN
+train$y <- as.numeric(train$y)-1
+validate$y <- as.numeric(validate$y)-1
+test$y <- as.numeric(test$y)-1
+pred_train_KNN <- knn(train=train, test=validate, cl= train$y, k=3)
+pred_train_KNN <- as.factor(as.numeric(pred_train_KNN)-1)
+# KNN: predict test data
+pred_test_KNN <- knn(train=train, test=test, cl= train$y, k=3)
+pred_test_KNN <- as.factor(as.numeric(pred_test_KNN)-1)
+
+# Prepare training and testing data for level 1 training
+train_level_0 <- as.data.frame(cbind(pred_train_C50,pred_train_KNN,pred_train_rf))
+train_level_0$y <- as.factor(validate$y)
+test_level_0 <- as.data.frame(cbind(pred_test_C50,pred_test_KNN,pred_test_rf))
+colnames(train_level_0) <- c("c50", "rf", "knn", "y")
+colnames(test_level_0) <- c("c50", "rf", "knn")
+
+# Level 1: Logistic regression.
+glm <- glm(y ~ ., data=train_level_0, family = "binomial")
+summary(glm)
+# Categorical prediction
+glm.prob <- predict(glm, newdata = test_level_0, type="response")
+glm.pred <- as.factor(ifelse(glm.prob >= 0.5, 1, 0))
+# Report the prediction accuracy on the test dataset
+cat('Stacking accuracy:', mean(glm.pred == test$y), '\n')
+```
+
+## BONUS QUESTION
+● You may include additional code and a half page discussion comparing your stacking implementation and any of the level0 models.
+```{r message=FALSE}
+
+accuracy_res = matrix(NaN,nrow=1,ncol=4)
+accuracy_res[1,1] <- mean(test_level_0$c50 == test$y)
+accuracy_res[1,2] <- mean(test_level_0$knn == test$y)
+accuracy_res[1,3] <- mean(test_level_0$rf == test$y)
+accuracy_res[1,4] <- mean(glm.pred == test$y)
+
+colnames(accuracy_res) <- c("C50", "Rf", "Knn","Stacking")
+accuracy_res
+```
+#### Gernerally speaking,model stacking is an efficient ensemble method in which the predictions, generated by using various machine learning algorithms, are used as inputs in a second-layer learning algorithm. This second-layer algorithm is trained to optimally combine the model predictions to form a new set of predictions. For example in task 2, when linear regression is used as second-layer modeling, it estimates these weights by minimizing the least square errors. My stacking implementation performs better than my C50 and random forest base model, and it performs as good as my knn base model with 3 neighbors. However, I don't think this result is very conclusive as I didn't do any cross validation or tuning on the base models, neither did I do anything selection for my level 1 training.
+
+#### Also, the second-layer modeling is not restricted to only linear models; the relationship between the predictors can be more complex, opening the door to employing other machine learning algorithms - such as random forest, xgboost, and etc.
+
+#### Generalizing stacking implantation such that it can be used on any classification dataset.
+```{r message=FALSE}
+set.seed(1234)
+library(tidyverse)
+library(tidyr)
+library(caret) 
+library(class)
+library(rpart)
+
+my_stacking <- function(train_data,test_data,basemodels,stacking_method,k_fold){
+  # Factorize y for train data
+  train$y <- as.factor(train$y)
+  train$y <- factor(train$y ,levels = c(0,1),labels = c("level0", "level1"))
+
+  # Tune base models using cv
+  kf <- createFolds(train_data$y, k = k_fold)
+  control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3, 
+                        index=kf, 
+                        savePredictions='final', 
+                        classProbs=TRUE, 
+                        summaryFunction=twoClassSummary)
+  algos <- basemodels
+
+  model_list <- caretList(
+            y~., 
+            data=train_data, 
+            metric='ROC', 
+            trControl=control, 
+            methodList=algos)
+
+  # Check Base Models' Correlation
+  modelCor(resamples(model_list))
+
+  # Perform stacking
+  stack_control <- trainControl(method='repeatedcv',
+                              number=10,
+                              repeats=3,
+                              classProbs=TRUE,
+                              summaryFunction=twoClassSummary)
+
+  # Construct the final model
+  final_stack <- caretStack(model_list, 
+                        method=stacking_method, 
+                        metric='ROC', 
+                        trControl=stack_control)
+  return(final_stack)
+}
+```
+
+
+#### Task 3: Toy Data Competition. Now you try your best to predict the true label of the 2000 rows in the test set file (the file without true label). The performance metric is AUC. In other words, you are required to submit predicted probabilities. (5 marks)
+
+```{r message=FALSE}
+library(dplyr)
+library(nnet)
+library(e1071)
+library(mlbench)
+library(gbm)
+library(pROC)
+library(randomForest)
+library(rpart)
+library(caret)
+library(caretEnsemble)
+library(caTools)
+
+#### Split train data to check accuracy ######
+#train = read.csv("A3_train.csv")[1:1500,]
+#test = read.csv("A3_train.csv")[1501:2000,]
+#test$y  <- factor(test$y ,levels = c(0,1),labels = c("level0", "level1"))
+##############################################
+
+#train = read.csv("A3_train.csv")
+#test = read.csv("A3_test.csv")
+train$y <- as.factor(train$y)
+train$y <- factor(train$y ,levels = c(0,1),labels = c("level0", "level1"))
+
+kf <- createFolds(train$y,5)
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3, 
+                        index=kf, 
+                        savePredictions='final', 
+                        classProbs=TRUE, 
+                        summaryFunction=twoClassSummary)
+
+# Tune xgbTree base model
+#xgb_grid <- expand.grid(nrounds = c(20,100), max_depth = c(2,3,4), eta = c(0.001,0.1,0.3), gamma = c(0,0.01), colsample_bytree = c(0.5,0.7,0.75), min_child_weight = c(1,3), subsample = c(1,0.8))
+#xgbTree <- train(y~I(x4*x8)+I(x1*x8)+I(x1*x4)+I(x14*x15)+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15, train, method ="xgbTree", tuneGrid = xgb_grid, metric="ROC", trControl=control)
+# Best parameters: nrounds = 20, max_depth = 4, eta =0.1, gamma = 0, colsample_bytree= 0.5, min_child_weight = 1, subsample =0.8
+
+# Tune Random Forest Base Model
+#rf_grid <- expand.grid(.mtry = c(2,5,10,15))
+#rf <- train(y~I(x4*x8)+I(x1*x8)+I(x1*x4)+I(x14*x15)+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15, train, method ="rf", metric="ROC", tuneGrid = rf_grid, trControl=control)
+# Best parameters: mtry = 5
+
+# Tune Adaboost Base Model
+#adaboost <- train(y~I(x4*x8)+I(x1*x8)+I(x1*x4)+I(x14*x15)+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15, train, method ="adaboost", metric="ROC", trControl=control)
+# Best parameters: nIter = 150,method = Adaboost.M1
+
+# Tune Neural Network Base Model
+#gridnnet <- expand.grid(.size=c(1:3), .decay=c(0.1,0.2))
+#nnet <- train(y~I(x4*x8)+I(x1*x8)+I(x1*x4)+I(x14*x15)+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15, train, method ="nnet", metric="ROC", tuneGrid = gridnnet, trControl=control)
+# Best parameters: size = 2,decay = 0.2
+
+# Construct base models
+model_list <- caretList(
+                        y~I(x4*x8)+I(x1*x8)+I(x1*x4)+I(x14*x15)+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15,                          data=train,
+                        trControl=control,
+                        metric="ROC",
+                        tuneList=list(
+                        rf=caretModelSpec(method="rf", tuneGrid=data.frame(.mtry = 5)),
+                        nn=caretModelSpec(method="nnet",tuneGrid=data.frame(size = 2,
+                                                                            decay = 0.2),
+                                          trace=FALSE),
+                        ada=caretModelSpec(method="adaboost",tuneGrid=data.frame(nIter = 150,
+                                                                              method = 'Adaboost.M1')),
+                        xgb=caretModelSpec(method="xgbTree",tuneGrid=data.frame(nrounds = 20,
+                                                                             max_depth = 4,
+                                                                             eta = 0.1,
+                                                                             gamma = 0, 
+                                                                             colsample_bytree = 0.5,
+                                                                             min_child_weight = 1,
+                                                                             subsample = 0.8))))
+
+# Check Model Correlation
+modelCor(resamples(model_list))
+
+##### Stacking using xgbTree ######
+xgb_stack <- caretStack(
+ model_list,
+ method="xgbTree",
+ metric="ROC",
+ tuneGrid=expand.grid(
+   nrounds=50, 
+   max_depth=1, 
+   eta=0.3, 
+   gamma=0, 
+   colsample_bytree =0.8, 
+   min_child_weight=1, 
+   subsample =0.8),
+ trControl=trainControl(
+ method="boot",
+ number=10,
+ savePredictions="final",
+ classProbs=TRUE,
+ summaryFunction=twoClassSummary
+  )
+)
+
+##### Check xgb_stack's AUC #############
+#model_preds3 <- model_preds
+#model_preds3$xgb_stack <- as.numeric(predict(xgb_stack,test, type="raw"))-1
+#colAUC(model_preds3, test$y)
+#########################################
+
+pred_y <- predict(xgb_stack, newdata=test, type="prob")
+write.csv(pred_y,"A0186102N.csv",row.names = FALSE)
+
+```
